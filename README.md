@@ -20,3 +20,5 @@
 Windows 调试原件单独备份在 `local-private/windows-debug/`。
 
 公开发布参阅[上传步骤](docs/publish.md)和[来源与许可](NOTICE.md)。
+
+[驱动下载、对应源码与校验值](downloads/README.md)
