@@ -7,7 +7,7 @@
 | NVRMFB、NVRM、NVAccel、NVRMAGDC、NMXAudio | 本机 NullMoth 套件，NVRMFB 使用已验证的诊断版本 | /Library/Extensions 与 AuxKC |
 | itlwm / HeliPort | [itlwm](https://github.com/OpenIntelWireless/itlwm/tree/53c51c2cdd6e4b69beb91f310d74c53422b0f8bd) 和 [HeliPort](https://github.com/OpenIntelWireless/HeliPort)，备用路径 | 采用原生 Wi-Fi 时禁用 itlwm 注入 |
 
-编译使用 Xcode 26.6，选择 x86_64 Release。AirportItlwm 使用对应源码的 Tahoe 目标。Cirrus 在对应提交应用 `patches/cirrus-g814.patch`，准备仓库所需的 Lilu 和 MacKernelSDK，再在本机应用受 Git 忽略的 `local-private/cirrus-firmware.patch`。OEM 固件来自已安装的 Windows 驱动，具体 INF 和文件路径见本机原始记录。构建命令如下。
+编译使用 Xcode 26.6，选择 x86_64 Release。AirportItlwm 使用对应源码的 Tahoe 目标。Cirrus 在对应提交应用 `patches/cirrus-g814.patch`，准备仓库所需的 Lilu 和 MacKernelSDK，再运行 `bash /path/to/scripts/import-g814-cirrus-firmware.sh "$PWD" /path/to/csaudioext.inf_amd64_目录`。输入为 Windows DriverStore 内的 G814JV csaudioext 驱动包。脚本先验证，再导入 B2 固件与 V0/V1 的双声道系数。构建命令如下。
 
 ```sh
 xcodebuild -project CirrusAudioFixup.xcodeproj -target CirrusAudioFixup \

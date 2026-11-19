@@ -5,3 +5,5 @@
 - 本仓库文档和自编脚本暂未指定单独的再分发许可证。若维护者选择授权，请明确许可证适用的文件范围，第三方补丁仍遵守上游条款。
 
 AirportItlwm 下载包保留 GPLv2 和 Intel 固件许可，并附对应源码及构建依赖。见[下载页](downloads/README.md)。
+
+RTX 4060 归档保留 NullMoth Systems 署名、PolyForm Noncommercial 1.0.0 和第三方许可。
