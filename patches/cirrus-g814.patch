@@ -1,0 +1,139 @@
+diff --git a/CirrusAudioFixup/Platform/HDA/AudioEventSource.cpp b/CirrusAudioFixup/Platform/HDA/AudioEventSource.cpp
+index 60c84a4..6e0a34a 100644
+--- a/CirrusAudioFixup/Platform/HDA/AudioEventSource.cpp
++++ b/CirrusAudioFixup/Platform/HDA/AudioEventSource.cpp
+@@ -269,6 +269,18 @@ void CirrusAudioEventSource::refreshRoute() {
+             auto* service = OSDynamicCast(IOService, entry);
+             if (!service)
+                 continue;
++            // NMXAudio exposes independent speaker and headphone engines,
++            // so the verified internal output has no selector control.
++            if (service->metaCast("NMXAudioEngine")) {
++                auto* property = service->copyProperty("IOAudioEngineGlobalUniqueID");
++                auto* id = OSDynamicCast(OSString, property);
++                const bool speaker = id && id->isEqualTo("NMXAudio:00:1f.3/0.0.0:out");
++                if (property)
++                    property->release();
++                if (speaker)
++                    observe(service, true, kInternalSpeaker, true);
++                continue;
++            }
+             uint32_t type = 0, subtype = 0, usage = 0, value = 0;
+             if (readNumber(service, "IOAudioControlType", type) && type == kSelectorType &&
+                 readNumber(service, "IOAudioControlSubType", subtype) && subtype == kOutputControl &&
+@@ -299,7 +311,12 @@ void CirrusAudioEventSource::observe(IOService* sender, bool route, uint32_t val
+         return;
+     IORegistryEntry* engine = nullptr;
+     if (route) {
+-        engine = sender->copyParentEntry(gIOServicePlane);
++        if (seed && sender->metaCast("NMXAudioEngine")) {
++            engine = sender;
++            engine->retain();
++        } else {
++            engine = sender->copyParentEntry(gIOServicePlane);
++        }
+         // A selector is useful only when it belongs to an audio engine. This
+         // prevents a controller-scoped control from binding an unrelated engine.
+         if (!engine || !engine->metaCast("IOAudioEngine")) {
+diff --git a/CirrusAudioFixup/Service/CirrusAudioFixup.cpp b/CirrusAudioFixup/Service/CirrusAudioFixup.cpp
+index 28e282e..e9617e3 100644
+--- a/CirrusAudioFixup/Service/CirrusAudioFixup.cpp
++++ b/CirrusAudioFixup/Service/CirrusAudioFixup.cpp
+@@ -100,33 +100,48 @@ bool CirrusAudioFixup::start(IOService* provider) {
+         return false;
+     }
+ 
++#if defined(KERNEL)
++    publishMatchingEvent("START_SUPER_READY", provider, kIOReturnSuccess);
++#endif
+     mProvider = provider;
+     logProviderInfo(provider);
+     dumpProviderProperties(provider);
+     CIRRUS_LOG("BOOT_FLOW PROFILE_BEGIN");
++#if defined(KERNEL)
++    publishMatchingEvent("PROFILE_BEGIN", provider, kIOReturnSuccess);
++#endif
+     resolvePlatformProfile();
+     CIRRUS_LOG("BOOT_FLOW PROFILE_END");
+ 
++#if defined(KERNEL)
++    publishMatchingEvent("PROFILE_READY", provider, kIOReturnSuccess);
++#endif
+     if (!registerAmplifierDrivers()) {
+         recordAttachmentFailure("REGISTRATION", "DRIVER_REGISTRY_REJECTED", kIOReturnBadArgument);
+         mProvider = nullptr;
+         super::stop(provider);
+         return false;
+     }
++#if defined(KERNEL)
++    publishMatchingEvent("DRIVER_REGISTRY_READY", provider, kIOReturnSuccess);
++#endif
+     char requestedPhase[32]{};
+-    if (PE_parse_boot_argn("-cirrusphase", requestedPhase, sizeof(requestedPhase))) {
++    if (PE_parse_boot_argn("cirrusphase", requestedPhase, sizeof(requestedPhase))) {
+         requestedPhase[sizeof(requestedPhase) - 1] = 0;
+         setProperty("Cirrus_Debug_Phase", requestedPhase);
+         const bool valid = mDriverRegistry.acceptsDebugPhase(mPlatformProfile ? mPlatformProfile->acpiHid : nullptr, requestedPhase);
+         if (!valid) {
+             recordAttachmentFailure("DEBUG_POLICY", "INVALID_DEBUG_PHASE", kIOReturnBadArgument);
+-            CIRRUS_ERR("Unsupported -cirrusphase=%s; initialization rejected", requestedPhase);
++            CIRRUS_ERR("Unsupported cirrusphase=%s; initialization rejected", requestedPhase);
+             mProvider = nullptr;
+             super::stop(provider);
+             return false;
+         }
+     }
+ 
++#if defined(KERNEL)
++    publishMatchingEvent("PROBE_TIMER_BEGIN", provider, kIOReturnSuccess);
++#endif
+     if (!setupProbeTimer()) {
+ #if defined(KERNEL)
+         publishBootCheckpoint(this, "EVENT_SETUP_FAILED", kIOReturnNoMemory);
+@@ -139,11 +154,17 @@ bool CirrusAudioFixup::start(IOService* provider) {
+     CIRRUS_LOG("BOOT_FLOW COMMUNICATION_BEGIN");
+ #if defined(KERNEL)
+     publishBootCheckpoint(this, "COMMUNICATION_BEGIN");
++#endif
++#if defined(KERNEL)
++    publishMatchingEvent("COMMUNICATION_BEGIN", provider, kIOReturnSuccess);
+ #endif
+     const bool communicationReady = setupCommunication(provider);
+     CIRRUS_LOG("BOOT_FLOW COMMUNICATION_END ready=%u", unsigned(communicationReady));
+ #if defined(KERNEL)
+     publishBootCheckpoint(this, "COMMUNICATION_END", communicationReady ? kIOReturnSuccess : kIOReturnError);
++#endif
++#if defined(KERNEL)
++    publishMatchingEvent("COMMUNICATION_RETURNED", provider, kIOReturnSuccess);
+ #endif
+     if (!communicationReady) {
+ #if defined(KERNEL)
+@@ -336,8 +357,10 @@ bool CirrusAudioFixup::bootArgEnabled(const char* name) {
+ }
+ 
+ bool CirrusAudioFixup::bootArgStrEquals(const char* name, const char* expectedVal) {
++    // XNU treats a leading dash as a boolean boot argument.
++    const char* bootKey = strcmp(name, "-cirrusphase") == 0 ? "cirrusphase" : name;
+     char val[64] = {};
+-    if (PE_parse_boot_argn(name, val, sizeof(val))) {
++    if (PE_parse_boot_argn(bootKey, val, sizeof(val))) {
+         val[sizeof(val) - 1] = 0;
+         return strncmp(val, expectedVal, sizeof(val)) == 0;
+     }
+diff --git a/CirrusAudioFixup/Service/CirrusAudioFixupAttachment.cpp b/CirrusAudioFixup/Service/CirrusAudioFixupAttachment.cpp
+index 99f8899..f7ed616 100644
+--- a/CirrusAudioFixup/Service/CirrusAudioFixupAttachment.cpp
++++ b/CirrusAudioFixup/Service/CirrusAudioFixupAttachment.cpp
+@@ -816,6 +816,12 @@ void CirrusAudioFixup::bringUpAmplifiers() {
+         }
+     }
+ 
++    if (bootArgEnabled("-cirrusidentity")) {
++        mDebugPhaseHalted = true;
++        setProperty("Cirrus_Debug_Phase", "identity");
++        publishDriverVerdict();
++        return;
++    }
+     if (stopAfterDebugStage("probe")) {
+         publishDriverVerdict();
+         return;
